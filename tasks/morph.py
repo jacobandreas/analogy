@@ -36,12 +36,6 @@ class MorphDataset(torch_data.Dataset):
 
         self.n_tokens = len(token_dict)
 
-        self.lemma_to_index = defaultdict(list)
-        self.morph_to_index = defaultdict(list)
-        for i in range(len(self.surface_forms)):
-            self.lemma_to_index[self.lemmas[i]].append(i)
-            self.morph_to_index[self.morphs[i]].append(i)
-
         self.reverse_token_dict = {v: k for k, v in self.token_dict.items()}
 
         ids = list(range(len(self.surface_forms)))
@@ -49,6 +43,14 @@ class MorphDataset(torch_data.Dataset):
         n_train = int(len(ids) * .9)
         self.train_ids = ids[:n_train]
         self.test_ids = ids[n_train:]
+
+        self.lemma_to_index = defaultdict(list)
+        self.morph_to_index = defaultdict(list)
+        for i in range(len(self.surface_forms)):
+            if i in self.test_ids:
+                continue
+            self.lemma_to_index[self.lemmas[i]].append(i)
+            self.morph_to_index[self.morphs[i]].append(i)
 
     def render(self, tokens):
         out = []
@@ -97,3 +99,4 @@ def load():
         token_dict = json.load(reader)
 
     return MorphDataset(surface_forms, lemmas, morphs, FLAGS.n_exemplars, token_dict)
+
