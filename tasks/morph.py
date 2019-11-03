@@ -43,20 +43,33 @@ class MorphDataset(torch_data.Dataset):
         n_train = int(len(ids) * .9)
         self.train_ids = ids[:n_train]
         self.test_ids = ids[n_train:]
+        self.train_forms = set(tuple(surface_forms[i]) for i in self.train_ids)
+        self.test_forms = set(tuple(surface_forms[i]) for i in self.test_ids)
 
         self.lemma_to_index = defaultdict(list)
         self.morph_to_index = defaultdict(list)
+        self.lemma_and_morph_to_index = dict()
         for i in range(len(self.surface_forms)):
             if i in self.test_ids:
                 continue
             self.lemma_to_index[self.lemmas[i]].append(i)
             self.morph_to_index[self.morphs[i]].append(i)
+            self.lemma_and_morph_to_index[self.lemmas[i], self.morphs[i]] = i
 
     def render(self, tokens):
         out = []
         for token in tokens:
             out.append(self.reverse_token_dict[token])
+        out = [o for o in out if o not in ("<s>", "</s>")]
         return ("".join(out))
+
+    def origin(self, seq):
+        seq = tuple(seq)
+        if seq in self.train_forms:
+            return "train"
+        if seq in self.test_forms:
+            return "test"
+        return "none"
 
     def __len__(self):
         return len(self.train_ids)
@@ -67,18 +80,48 @@ class MorphDataset(torch_data.Dataset):
         lemma = self.lemmas[i]
         morph = self.morphs[i]
 
-        lemma_ex_ids = np.random.choice(
-            self.lemma_to_index[lemma],
-            size=self.n_exemplars//2
-        )
-        morph_ex_ids = np.random.choice(
-            self.morph_to_index[morph],
-            size=self.n_exemplars//2
-        )
-        lemma_exs = [self.surface_forms[li] for li in lemma_ex_ids]
-        morph_exs = [self.surface_forms[mi] for mi in morph_ex_ids]
+        ex_ids = np.random.choice(len(self.train_ids), size=3)
+        success = False
+        for i in range(10):
+            try:
+                same_lemma = np.random.choice(self.lemma_to_index[lemma])
+                same_morph = np.random.choice(self.morph_to_index[morph])
+                different = self.lemma_and_morph_to_index[self.lemmas[same_lemma], self.morphs[same_morph]]
 
-        return surf, lemma_exs + morph_exs
+                ex_ids = [
+                    same_lemma,
+                    same_morph,
+                    different
+                ]
+                success = True
+                break
+            except AssertionError:
+                pass
+
+        exs = [self.surface_forms[ei] for ei in ex_ids]
+        return surf, exs
+
+    def _random_exemplar_group(self):
+        if np.random.random() < 0.5:
+            lemma = np.random.choice(self.lemmas)
+            i1, i2 = np.random.choice(self.lemma_to_index[lemma], size=2)
+            morph = self.morphs[i1]
+            i3 = np.random.choice(self.morph_to_index[morph])
+        else:
+            morph = np.random.choice(self.morphs)
+            i1, i2 = np.random.choice(self.morph_to_index[morph], size=2)
+            lemma = self.lemmas[i1]
+            i3 = np.random.choice(self.lemma_to_index[lemma])
+        return [self.surface_forms[ei] for ei in [i1, i2, i3]]
+
+    def eval_batch(self, size):
+        exemplars = []
+        while len(exemplars) < size:
+            try:
+                exemplars.append(self._random_exemplar_group())
+            except ValueError:
+                pass
+        return exemplars, batch_seqs_2d(exemplars)
 
     def collate(self, batch):
         target, exemplars = zip(*batch)
