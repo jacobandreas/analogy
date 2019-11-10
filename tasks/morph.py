@@ -27,10 +27,11 @@ def batch_seqs_2d(seqs2d):
     return data
 
 class MorphDataset(torch_data.Dataset):
-    def __init__(self, surface_forms, lemmas, morphs, n_exemplars, token_dict):
+    def __init__(self, surface_forms, lemmas, morphs, refs, n_exemplars, token_dict):
         self.surface_forms = surface_forms
         self.lemmas = lemmas
         self.morphs = morphs
+        self.refs = refs
         self.n_exemplars = n_exemplars
         self.token_dict = token_dict
 
@@ -40,7 +41,7 @@ class MorphDataset(torch_data.Dataset):
 
         ids = list(range(len(self.surface_forms)))
         np.random.shuffle(ids)
-        n_train = int(len(ids) * .9)
+        n_train = int(len(ids) * .5)
         self.train_ids = ids[:n_train]
         self.test_ids = ids[n_train:]
         self.train_forms = set(tuple(surface_forms[i]) for i in self.train_ids)
@@ -49,12 +50,29 @@ class MorphDataset(torch_data.Dataset):
         self.lemma_to_index = defaultdict(list)
         self.morph_to_index = defaultdict(list)
         self.lemma_and_morph_to_index = dict()
-        for i in range(len(self.surface_forms)):
-            if i in self.test_ids:
-                continue
+        for i in self.train_ids:
             self.lemma_to_index[self.lemmas[i]].append(i)
             self.morph_to_index[self.morphs[i]].append(i)
             self.lemma_and_morph_to_index[self.lemmas[i], self.morphs[i]] = i
+
+        self.train_groups = defaultdict(list)
+        self.test_groups = []
+        for i in self.train_ids:
+            lemma = self.lemmas[i]
+            morph = self.morphs[i]
+            for same_lemma in self.lemma_to_index[lemma]:
+                if same_lemma == i:
+                    continue
+                for same_morph in self.morph_to_index[morph]:
+                    if same_morph == i:
+                        continue
+                    key = (self.lemmas[same_morph], self.morphs[same_lemma])
+                    if key not in self.lemma_and_morph_to_index:
+                        self.test_groups.append((i, same_lemma, same_morph))
+                    else:
+                        different = self.lemma_and_morph_to_index[key]
+                        self.train_groups[i].append((same_lemma, same_morph, different))
+        self.usable_train_ids = sorted(list(self.train_groups.keys()))
 
     def render(self, tokens):
         out = []
@@ -69,34 +87,20 @@ class MorphDataset(torch_data.Dataset):
             return "train"
         if seq in self.test_forms:
             return "test"
+        if seq in self.refs:
+            return "valid"
         return "none"
 
     def __len__(self):
-        return len(self.train_ids)
+        return len(self.usable_train_ids)
 
     def __getitem__(self, i):
-        i = self.train_ids[i]
+        i = self.usable_train_ids[i]
         surf = self.surface_forms[i]
         lemma = self.lemmas[i]
         morph = self.morphs[i]
 
-        ex_ids = np.random.choice(len(self.train_ids), size=3)
-        success = False
-        for i in range(10):
-            try:
-                same_lemma = np.random.choice(self.lemma_to_index[lemma])
-                same_morph = np.random.choice(self.morph_to_index[morph])
-                different = self.lemma_and_morph_to_index[self.lemmas[same_lemma], self.morphs[same_morph]]
-
-                ex_ids = [
-                    same_lemma,
-                    same_morph,
-                    different
-                ]
-                success = True
-                break
-            except AssertionError:
-                pass
+        ex_ids = self.train_groups[i][np.random.choice(len(self.train_groups[i]))]
 
         exs = [self.surface_forms[ei] for ei in ex_ids]
         return surf, exs
@@ -114,13 +118,14 @@ class MorphDataset(torch_data.Dataset):
             i3 = np.random.choice(self.lemma_to_index[lemma])
         return [self.surface_forms[ei] for ei in [i1, i2, i3]]
 
-    def eval_batch(self, size):
+    def eval_batch(self, size, extrapolate=False):
         exemplars = []
         while len(exemplars) < size:
-            try:
-                exemplars.append(self._random_exemplar_group())
-            except ValueError:
-                pass
+            if extrapolate:
+                group = self.test_groups[np.random.randint(len(self.test_groups))]
+                exemplars.append([self.surface_forms[ei] for ei in group])
+            else:
+                exemplars.append(self[np.random.randint(len(self))][1])
         return exemplars, batch_seqs_2d(exemplars)
 
     def collate(self, batch):
@@ -141,5 +146,9 @@ def load():
     with open(os.path.join(FLAGS.morph_data, "tokens.json")) as reader:
         token_dict = json.load(reader)
 
-    return MorphDataset(surface_forms, lemmas, morphs, FLAGS.n_exemplars, token_dict)
+    with open(os.path.join(FLAGS.morph_data, "ref.json")) as reader:
+        refs = json.load(reader)
+        refs = set(tuple(t) for t in refs)
+
+    return MorphDataset(surface_forms, lemmas, morphs, refs, FLAGS.n_exemplars, token_dict)
 

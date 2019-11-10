@@ -1,7 +1,10 @@
 #!/bin/bash
 
-python3 ../../main.py \
+. $HOME/.profile
+
+python3 -u ../../main.py \
   --task="morph" \
   --model="analogy" \
-  --n_layers=2 \
-  --morph_data="/home/gridsan/jda/code/analogy/data/morph"
+  --n_hidden=1024 \
+  --morph_data="/home/gridsan/jda/code/analogy/data/morph" \
+  #&> run.log

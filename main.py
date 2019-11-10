@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from absl import app, flags
+import numpy as np
 import torch
 from torch import optim
 import torch.utils.data as torch_data
@@ -56,12 +57,17 @@ def main(args):
             opt.step()
             epoch_loss += loss.item()
 
-        #eval_batches = [dataset.eval_batch(100) for _ in range(10)]
-        eval_seqs, eval_batch = dataset.eval_batch(100)
-        samples = model.sample(torch.tensor(eval_batch, device=_device()), 100)
-        evaluation.visualize(eval_seqs[:10], samples[:10], dataset)
-        print(evaluation.compute_coverage(samples, dataset))
-        print(epoch_loss / i_batch)
+        print(i_epoch, 1 / (1 + np.exp(-(i_epoch/5 - 10))))
+        print(epoch_loss / (i_batch+1))
+        print()
+        for extrapolate in (True, False):
+            eval_seqs, eval_batch = dataset.eval_batch(100, extrapolate)
+            samples = model.sample(torch.tensor(eval_batch, device=_device()), 100)
+            print(f"extrapolate={extrapolate}")
+            evaluation.visualize(eval_seqs[:5], samples[:5], dataset)
+            print(evaluation.compute_coverage(samples, dataset))
+            print()
+        print()
 
 if __name__ == "__main__":
     app.run(main)

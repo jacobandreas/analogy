@@ -76,7 +76,7 @@ class Seq(nn.Module):
     def sample(self, exemplars, count):
         init_state = [torch.zeros(1, count, FLAGS.n_hidden), torch.zeros(1, count, FLAGS.n_hidden)]
         init_state = [t.to(_device()) for t in init_state]
-        return _sample(self.embed, self.rnn, self.predict, init_state, init_token=1, stop_token=9, count=count)
+        return _sample(self.embed, self.rnn, self.predict, init_state, init_token=1, stop_token=10, count=count)
 
 class Vae(nn.Module):
     def __init__(self, dataset):
@@ -138,7 +138,7 @@ class Vae(nn.Module):
         enc = torch.normal(mean=0, std=1, size=(1, count, FLAGS.n_hidden), device=_device())
         init_state = (enc, torch.zeros_like(enc))
         #init_state = (torch.zeros_like(enc), torch.zeros_like(enc))
-        return _sample(self.embed, self.rnn, self.predict, init_state, init_token=1, stop_token=9, count=count, greedy=True)
+        return _sample(self.embed, self.rnn, self.predict, init_state, init_token=1, stop_token=10, count=count, greedy=True)
 
 class CopyVae(nn.Module):
     def __init__(self, dataset):
@@ -212,7 +212,7 @@ class CopyVae(nn.Module):
         assert False
         enc = torch.normal(mean=0, std=1, size=(1, count, FLAGS.n_hidden), device=_device())
         init_state = (enc, torch.zeros_like(enc))
-        return _sample(self.embed, self.dec_rnn, self.predict, init_state, init_token=1, stop_token=9, count=count)
+        return _sample(self.embed, self.dec_rnn, self.predict, init_state, init_token=1, stop_token=10, count=count)
 
 class Analogy(nn.Module):
     def __init__(self, dataset):
@@ -225,7 +225,8 @@ class Analogy(nn.Module):
         self.representation_loss = nn.MSELoss()
         self.n_tokens = dataset.n_tokens
 
-    def forward(self, target, exemplars, **kwargs):
+    def forward(self, target, exemplars, epoch, **kwargs):
+        assert FLAGS.n_layers == 1
         n_seq, n_batch = target.shape
         n_ex_seq, _, n_ex = exemplars.shape
         assert n_ex == 3
@@ -237,18 +238,20 @@ class Analogy(nn.Module):
         pred_tgt = ex_encoding[:, 1, :] + ex_encoding[:, 2, :] - ex_encoding[:, 0, :]
         pred_tgt = pred_tgt.unsqueeze(0)
 
+        recon_scale = 0.5 * 1 / (1 + np.exp(-(epoch/5 - 10)))
+
         tgt_embedding = self.embed(target)
         _, (tgt_encoding, _) = self.enc(tgt_embedding)
-        if np.random.random() < 0.5:
-            rep = pred_tgt
-        else:
-            rep = tgt_encoding
+
+        mask = (torch.rand(1, n_batch, 1, device=_device()) < recon_scale).expand_as(pred_tgt).float()
+        rep = mask * pred_tgt + (1 - mask) * tgt_encoding
+
         hid = (rep, torch.zeros_like(rep))
         tgt_decoding, _ = self.dec(tgt_embedding[:-1, :, :], hid)
         tgt_pred = self.pred(tgt_decoding).view((n_seq - 1) * n_batch, self.n_tokens)
 
         return (
-            self.representation_loss(pred_tgt, tgt_encoding)
+            recon_scale * self.representation_loss(pred_tgt, tgt_encoding)
             + self.reconstruction_loss(tgt_pred, target[1:, :].view((n_seq - 1) * n_batch))
         )
 
@@ -263,5 +266,5 @@ class Analogy(nn.Module):
         pred_tgt = ex_encoding[:, 1, :] + ex_encoding[:, 2, :] - ex_encoding[:, 0, :]
         pred_tgt = pred_tgt.unsqueeze(0)
         init_state = (pred_tgt, torch.zeros_like(pred_tgt))
-        return _sample(self.embed, self.dec, self.pred, init_state, init_token=1, stop_token=9, count=count, greedy=True)
+        return _sample(self.embed, self.dec, self.pred, init_state, init_token=1, stop_token=10, count=count, greedy=True)
 
